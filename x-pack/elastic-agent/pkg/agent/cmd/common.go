@@ -119,6 +119,9 @@ func generatePaths(dir, origExec string) error {
 		return err
 	}
 
+	if err := os.MkdirAll(paths.Data(), 0755); err != nil {
+		return err
+	}
 	if err := ioutil.WriteFile(pathsCfgPath, pathsContent, 0740); err != nil {
 		return err
 	}

@@ -8,7 +8,6 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 
 	"github.com/elastic/beats/v7/x-pack/elastic-agent/pkg/config"
@@ -102,25 +101,17 @@ func Logs() string {
 	return logsPath
 }
 
-func retrieveExecutablePath() string {
+func initialHome() string {
 	execPath, err := os.Executable()
 	if err != nil {
 		panic(err)
 	}
-
 	evalPath, err := filepath.EvalSymlinks(execPath)
 	if err != nil {
 		panic(err)
 	}
-
-	return filepath.Dir(evalPath)
-}
-
-func initialHome() string {
-	exePath := retrieveExecutablePath()
-	if runtime.GOOS == "windows" {
-		return exePath
+	if execPath == evalPath {
+		return filepath.Dir(execPath)
 	}
-
-	return filepath.Dir(filepath.Dir(exePath)) // is two level up the executable (symlink evaluated)
+	return filepath.Dir(filepath.Dir(evalPath)) // is two level up the executable (symlink evaluated)
 }
