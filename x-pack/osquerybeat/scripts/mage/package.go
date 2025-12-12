@@ -14,45 +14,66 @@ import (
 
 const defaultArch = "amd64"
 
+// CustomizePackaging adds the files required for osquerybeat to packaging.
 func CustomizePackaging() {
 	for _, args := range devtools.Packages {
-		distFile := distro.OsquerydDistroPlatformFilename(args.OS)
-
-		// The minimal change to fix the issue for 7.13
-		// https://github.com/elastic/beats/issues/25762
-		// TODO: this could be moved to dev-tools/packaging/packages.yml for the next release
-		var mode os.FileMode = 0644
-		// If distFile is osqueryd binary then it should be executable
-		if distFile == distro.OsquerydFilenameForOS(args.OS) {
-			mode = 0750
-		}
 		arch := defaultArch
 		if args.Arch != "" {
 			arch = args.Arch
 		}
-		packFile := devtools.PackageFile{
-			Mode:   mode,
-			Source: filepath.Join(distro.GetDataInstallDir(distro.OSArch{OS: args.OS, Arch: arch}), distFile),
-		}
-
-		// If macOS bundle osquery.app, preserve the directories and files permissions
-		if distFile == distro.OsquerydDarwinApp() {
-			packFile.PreserveMode = true
-		}
-
-		args.Spec.Files[distFile] = packFile
-
-		// Certs
-		certsFile := devtools.PackageFile{
-			Mode:   0640,
-			Source: filepath.Join(distro.GetDataInstallDir(distro.OSArch{OS: args.OS, Arch: arch}), "certs", "certs.pem"),
-		}
-
-		args.Spec.Files[filepath.Join("certs", "certs.pem")] = certsFile
-
-		// Augeas lenses are not available for Windows
-		if args.OS != "windows" {
-			args.Spec.Files["lenses"] = devtools.PackageFile{Source: filepath.Join(distro.GetDataInstallDir(distro.OSArch{OS: args.OS, Arch: arch}), "lenses")}
+		files := GetFilesForOSArch(args.OS, arch)
+		for name, file := range files {
+			args.Spec.Files[name] = devtools.PackageFile{
+				Mode:         file.Mode,
+				Source:       file.Source,
+				PreserveMode: file.PreserveMode,
+			}
 		}
 	}
+}
+
+// File is a generic structure returned from GetFilesForOSArch
+type File struct {
+	Mode         os.FileMode
+	Source       string
+	PreserveMode bool
+}
+
+// GetFilesForOSArch returns the needed files based on the os/arch combination.
+func GetFilesForOSArch(osStr string, archStr string) map[string]File {
+	files := make(map[string]File)
+	distFile := distro.OsquerydDistroPlatformFilename(osStr)
+
+	// The minimal change to fix the issue for 7.13
+	// https://github.com/elastic/beats/issues/25762
+	var mode os.FileMode = 0644
+	// If distFile is osqueryd binary then it should be executable
+	if distFile == distro.OsquerydFilenameForOS(osStr) {
+		mode = 0750
+	}
+	packFile := File{
+		Mode:   mode,
+		Source: filepath.Join(distro.GetDataInstallDir(distro.OSArch{OS: osStr, Arch: archStr}), distFile),
+	}
+
+	// If macOS bundle osquery.app, preserve the directories and files permissions
+	if distFile == distro.OsquerydDarwinApp() {
+		packFile.PreserveMode = true
+	}
+
+	files[distFile] = packFile
+
+	// Certs
+	certsFile := File{
+		Mode:   0640,
+		Source: filepath.Join(distro.GetDataInstallDir(distro.OSArch{OS: osStr, Arch: archStr}), "certs", "certs.pem"),
+	}
+
+	files[filepath.Join("certs", "certs.pem")] = certsFile
+
+	// Augeas lenses are not available for Windows
+	if osStr != "windows" {
+		files["lenses"] = File{Source: filepath.Join(distro.GetDataInstallDir(distro.OSArch{OS: osStr, Arch: archStr}), "lenses")}
+	}
+	return files
 }
