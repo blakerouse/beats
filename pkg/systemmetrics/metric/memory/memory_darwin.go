@@ -17,19 +17,6 @@
 
 package memory
 
-/*
-#include <stdlib.h>
-#include <sys/sysctl.h>
-#include <sys/mount.h>
-#include <mach/mach_init.h>
-#include <mach/mach_host.h>
-#include <mach/host_info.h>
-#include <libproc.h>
-#include <mach/processor_info.h>
-#include <mach/vm_map.h>
-*/
-import "C"
-
 import (
 	"bytes"
 	"encoding/binary"
@@ -38,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/elastic/beats/v7/pkg/opt"
+	"github.com/elastic/beats/v7/pkg/systemmetrics/internal/mach"
 	"github.com/elastic/beats/v7/pkg/systemmetrics/metric/system/resolve"
 )
 
@@ -47,8 +35,6 @@ type xswUsage struct {
 
 // get is the darwin implementation for fetching Memory data
 func get(_ resolve.Resolver) (Memory, error) {
-	var vmstat C.vm_statistics_data_t
-
 	mem := Memory{}
 
 	var total uint64
@@ -58,12 +44,13 @@ func get(_ resolve.Resolver) (Memory, error) {
 	}
 	mem.Total = opt.UintWith(total)
 
-	if err := vmInfo(&vmstat); err != nil {
-		return Memory{}, fmt.Errorf("error getting VM info")
+	vmstat, err := mach.HostVMStatistics()
+	if err != nil {
+		return Memory{}, fmt.Errorf("error getting VM info: %w", err)
 	}
 
-	kern := uint64(vmstat.inactive_count) << 12
-	free := uint64(vmstat.free_count) << 12
+	kern := uint64(vmstat.InactiveCount) << 12
+	free := uint64(vmstat.FreeCount) << 12
 
 	mem.Free = opt.UintWith(free)
 	mem.Used.Bytes = opt.UintWith(total - free)
@@ -71,7 +58,6 @@ func get(_ resolve.Resolver) (Memory, error) {
 	mem.Actual.Free = opt.UintWith(free + kern)
 	mem.Actual.Used.Bytes = opt.UintWith((total - free) - kern)
 
-	var err error
 	mem.Swap, err = getSwap()
 	if err != nil {
 		return mem, fmt.Errorf("error getting swap memory: %w", err)
@@ -113,20 +99,4 @@ func sysctlbyname(name string, data any) (err error) {
 
 	bbuf := bytes.NewBuffer([]byte(val))
 	return binary.Read(bbuf, binary.LittleEndian, data)
-}
-
-func vmInfo(vmstat *C.vm_statistics_data_t) error {
-	var count C.mach_msg_type_number_t = C.HOST_VM_INFO_COUNT
-
-	status := C.host_statistics(
-		C.mach_host_self(),
-		C.HOST_VM_INFO,
-		C.host_info_t(unsafe.Pointer(vmstat)),
-		&count)
-
-	if status != C.KERN_SUCCESS {
-		return fmt.Errorf("host_statistics=%d", status)
-	}
-
-	return nil
 }

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build (darwin && cgo) || freebsd
+//go:build darwin || freebsd
 
 package diskio
 

@@ -15,24 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build darwin && cgo
+//go:build darwin
 
 package process
 
-/*
-#include <stdlib.h>
-#include <sys/sysctl.h>
-#include <sys/mount.h>
-#include <mach/mach_init.h>
-#include <mach/mach_host.h>
-#include <mach/host_info.h>
-#include <mach/mach_time.h>
-#include <libproc.h>
-#include <sys/resource.h>
-#include <mach/processor_info.h>
-#include <mach/vm_map.h>
-*/
-import "C"
 import (
 	"bytes"
 	"encoding/binary"
@@ -48,6 +34,7 @@ import (
 
 	"github.com/elastic/beats/v7/pkg/mapstr"
 	"github.com/elastic/beats/v7/pkg/opt"
+	"github.com/elastic/beats/v7/pkg/systemmetrics/internal/mach"
 	"github.com/elastic/beats/v7/pkg/systemmetrics/metric/system/resolve"
 )
 
@@ -59,13 +46,13 @@ func GetSelfPid(hostfs resolve.Resolver) (int, error) {
 
 // FetchPids returns a map and array of pids
 func (procStats *Stats) FetchPids() (ProcsMap, []ProcState, error) {
-	n := C.proc_listpids(C.PROC_ALL_PIDS, 0, nil, 0)
-	if n <= 0 {
+	n, err := listPIDs(nil)
+	if err != nil || n <= 0 {
 		return nil, nil, syscall.EINVAL
 	}
 	buf := make([]byte, n)
-	n = C.proc_listpids(C.PROC_ALL_PIDS, 0, unsafe.Pointer(&buf[0]), n)
-	if n <= 0 {
+	n, err = listPIDs(buf)
+	if err != nil || n <= 0 {
 		return nil, nil, syscall.ENOMEM
 	}
 
@@ -77,7 +64,6 @@ func (procStats *Stats) FetchPids() (ProcsMap, []ProcState, error) {
 	procMap := make(ProcsMap, num)
 	plist := make([]ProcState, 0, num)
 	var wrappedErr error
-	var err error
 
 	for range num {
 		if err := binary.Read(bbuf, binary.LittleEndian, &pid); err != nil {
@@ -96,45 +82,41 @@ func (procStats *Stats) FetchPids() (ProcsMap, []ProcState, error) {
 
 // GetInfoForPid returns basic info for the process
 func GetInfoForPid(_ resolve.Resolver, pid int) (ProcState, error) {
-	info := C.struct_proc_taskallinfo{}
-
-	size := C.int(unsafe.Sizeof(info))
-	ptr := unsafe.Pointer(&info)
+	var info procTaskAllInfo
 
 	// For docs, see the link below. Check the `proc_taskallinfo` struct, which
 	// is a composition of `proc_bsdinfo` and `proc_taskinfo`.
 	// https://opensource.apple.com/source/xnu/xnu-1504.3.12/bsd/sys/proc_info.h.auto.html
-	n, err := C.proc_pidinfo(C.int(pid), C.PROC_PIDTASKALLINFO, 0, ptr, size)
-	if n != size {
-		return ProcState{}, fmt.Errorf("could not read process info for pid %d: proc_pidinfo returned %d, err: %w", pid, int(n), err)
+	if err := pidTaskAllInfo(pid, &info); err != nil {
+		return ProcState{}, fmt.Errorf("could not read process info for pid %d: %w", pid, err)
 	}
 
 	status := ProcState{}
 
-	status.Name = C.GoString(&info.pbsd.pbi_comm[0])
+	status.Name = cString(info.BSD.Comm[:])
 
-	switch info.pbsd.pbi_status {
-	case C.SIDL:
+	switch info.BSD.Status {
+	case sIDL:
 		status.State = Idle
-	case C.SRUN:
+	case sRUN:
 		status.State = Running
-	case C.SSLEEP:
+	case sSLEEP:
 		status.State = Sleeping
-	case C.SSTOP:
+	case sSTOP:
 		status.State = Stopped
-	case C.SZOMB:
+	case sZOMB:
 		status.State = Zombie
 	default:
 		status.State = Unknown
 	}
 
-	status.Ppid = opt.IntWith(int(info.pbsd.pbi_ppid))
+	status.Ppid = opt.IntWith(int(info.BSD.Ppid))
 	status.Pid = opt.IntWith(pid)
-	status.Pgid = opt.IntWith(int(info.pbsd.pbi_pgid))
-	status.NumThreads = opt.IntWith(int(info.ptinfo.pti_threadnum))
+	status.Pgid = opt.IntWith(int(info.BSD.Pgid))
+	status.NumThreads = opt.IntWith(int(info.Task.Threadnum))
 
 	// Get process username. Fallback to UID if username is not available.
-	uid := strconv.Itoa(int(info.pbsd.pbi_uid))
+	uid := strconv.Itoa(int(info.BSD.UID))
 	user, err := user.LookupId(uid)
 	if err == nil && user.Username != "" {
 		status.Username = user.Username
@@ -143,31 +125,25 @@ func GetInfoForPid(_ resolve.Resolver, pid int) (ProcState, error) {
 	}
 
 	// grab memory info + process time while we have it from struct_proc_taskallinfo
-	status.Memory.Size = opt.UintWith(uint64(info.ptinfo.pti_virtual_size))
-	status.Memory.Rss.Bytes = opt.UintWith(uint64(info.ptinfo.pti_resident_size))
+	status.Memory.Size = opt.UintWith(uint64(info.Task.VirtualSize))
+	status.Memory.Rss.Bytes = opt.UintWith(uint64(info.Task.ResidentSize))
 
-	status.CPU.User.Ticks = opt.UintWith(machTimeToMs(uint64(info.ptinfo.pti_total_user)))
-	status.CPU.System.Ticks = opt.UintWith(machTimeToMs(uint64(info.ptinfo.pti_total_system)))
+	status.CPU.User.Ticks = opt.UintWith(machTimeToMs(uint64(info.Task.TotalUser)))
+	status.CPU.System.Ticks = opt.UintWith(machTimeToMs(uint64(info.Task.TotalSystem)))
 	status.CPU.Total.Ticks = opt.UintWith(opt.SumOptUint(status.CPU.User.Ticks, status.CPU.System.Ticks))
-	status.CPU.StartTime = unixTimeMsToTime((uint64(info.pbsd.pbi_start_tvsec) * 1000) + (uint64(info.pbsd.pbi_start_tvusec) / 1000))
+	status.CPU.StartTime = unixTimeMsToTime((uint64(info.BSD.StartTvsec) * 1000) + (uint64(info.BSD.StartTvusec) / 1000))
 
 	return status, nil
 }
 
 // machTimebase converts Mach absolute-time units to nanoseconds. The ratio is
 // 1/1 on Intel but 125/3 on Apple Silicon.
-var machTimebase = func() C.mach_timebase_info_data_t {
-	var tb C.mach_timebase_info_data_t
-	if C.mach_timebase_info(&tb) != C.KERN_SUCCESS || tb.denom == 0 {
-		return C.mach_timebase_info_data_t{numer: 1, denom: 1}
-	}
-	return tb
-}()
+var machTimebase = mach.TimebaseInfo()
 
 // machTimeToMs converts proc_taskinfo CPU times, which are in Mach
 // absolute-time units rather than nanoseconds, to milliseconds.
 func machTimeToMs(units uint64) uint64 {
-	ns := units * uint64(machTimebase.numer) / uint64(machTimebase.denom)
+	ns := units * uint64(machTimebase.Numer) / uint64(machTimebase.Denom)
 	return ns / uint64(time.Millisecond)
 }
 
@@ -195,19 +171,16 @@ func FillPidMetrics(_ resolve.Resolver, pid int, state ProcState, filter func(st
 // getPhysFootprint returns the physical memory footprint of the process, the
 // value top(1) reports as MEM and Activity Monitor as Memory.
 func getPhysFootprint(pid int) (uint64, error) {
-	var info C.struct_rusage_info_v0
-	// The buffer argument is declared as rusage_info_t* (void**), but the
-	// kernel writes the struct into the memory it points to.
-	n, err := C.proc_pid_rusage(C.int(pid), C.RUSAGE_INFO_V0, (*C.rusage_info_t)(unsafe.Pointer(&info)))
-	if n != 0 {
+	var info rusageInfoV0Data
+	if err := pidRusageV0(pid, &info); err != nil {
 		return 0, fmt.Errorf("proc_pid_rusage failed for pid %d: %w", pid, err)
 	}
-	return uint64(info.ri_phys_footprint), nil
+	return info.PhysFootprint, nil
 }
 
 func getProcArgs(pid int, filter func(string) bool) ([]string, string, mapstr.M, error) {
-	mib := []C.int{C.CTL_KERN, C.KERN_PROCARGS2, C.int(pid)}
-	argmax := uintptr(C.ARG_MAX)
+	mib := []int32{ctlKern, kernProcArgs2, int32(pid)}
+	argmax := uintptr(argMax)
 	buf := make([]byte, argmax)
 	err := sysctl(mib, &buf[0], &argmax, nil, 0)
 	if err != nil {
@@ -282,7 +255,7 @@ func getProcArgs(pid int, filter func(string) bool) ([]string, string, mapstr.M,
 	return argv, exeName, envVars, envErr
 }
 
-func sysctl(mib []C.int, old *byte, oldlen *uintptr,
+func sysctl(mib []int32, old *byte, oldlen *uintptr,
 	newp *byte, newlen uintptr) (err error) {
 	p0 := unsafe.Pointer(&mib[0])
 	_, _, e1 := syscall.Syscall6(syscall.SYS___SYSCTL, uintptr(p0),

@@ -17,33 +17,22 @@
 
 package filesystem
 
-/*
-#include <stdlib.h>
-#include <sys/sysctl.h>
-#include <sys/mount.h>
-#include <mach/mach_init.h>
-#include <mach/mach_host.h>
-#include <mach/host_info.h>
-#include <libproc.h>
-#include <mach/processor_info.h>
-#include <mach/vm_map.h>
-*/
-import "C"
-
 import (
 	"bytes"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func parseMounts(path string, filter func(FSStat) bool) ([]FSStat, error) {
-	num, err := syscall.Getfsstat(nil, C.MNT_NOWAIT)
+	num, err := syscall.Getfsstat(nil, unix.MNT_NOWAIT)
 	if err != nil {
 		return nil, err
 	}
 
 	buf := make([]syscall.Statfs_t, num)
 
-	_, err = syscall.Getfsstat(buf, C.MNT_NOWAIT)
+	_, err = syscall.Getfsstat(buf, unix.MNT_NOWAIT)
 	if err != nil {
 		return nil, err
 	}

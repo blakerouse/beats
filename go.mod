@@ -374,7 +374,7 @@ require (
 	github.com/docker/go-metrics v0.0.1 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20230731223053-c322873962e3 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
-	github.com/ebitengine/purego v0.11.2 // indirect
+	github.com/ebitengine/purego v0.11.2
 	github.com/elastic/elastic-transport-go/v8 v8.9.0
 	github.com/elastic/go-docappender/v2 v2.15.0 // indirect
 	github.com/elastic/go-windows v1.0.2
@@ -584,3 +584,5 @@ replace (
 	github.com/google/gopacket => github.com/elastic/gopacket v1.1.20-0.20260708143104-cfe2cc0f0cc7
 	github.com/meraki/dashboard-api-go/v3 => github.com/tommyers-elastic/dashboard-api-go/v3 v3.0.0-20250616163611-a325b49669a4
 )
+
+replace github.com/elastic/go-sysinfo => github.com/blakerouse/go-sysinfo v0.0.0-20261117144419-3b4cdf228f24
