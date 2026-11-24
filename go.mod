@@ -64,7 +64,7 @@ require (
 	github.com/elastic/go-perf v0.0.0-20260224073651-af0ee0c731b7
 	github.com/elastic/go-seccomp-bpf v1.6.0
 	github.com/elastic/go-structform v0.0.12
-	github.com/elastic/go-sysinfo v1.15.5
+	github.com/elastic/go-sysinfo v1.16.0
 	github.com/elastic/go-ucfg v0.9.2
 	github.com/elastic/gosigar v0.14.4
 	github.com/fatih/color v1.18.0
@@ -584,5 +584,3 @@ replace (
 	github.com/google/gopacket => github.com/elastic/gopacket v1.1.20-0.20260708143104-cfe2cc0f0cc7
 	github.com/meraki/dashboard-api-go/v3 => github.com/tommyers-elastic/dashboard-api-go/v3 v3.0.0-20250616163611-a325b49669a4
 )
-
-replace github.com/elastic/go-sysinfo => github.com/blakerouse/go-sysinfo v0.0.0-20261117144419-3b4cdf228f24
